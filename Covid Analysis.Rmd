@@ -1,0 +1,279 @@
+
+
+**1. Perform an exploratory data analysis, in which you describe, summarize,and display the data using words, numerical methods, and graphics. Be sure all figures and tables are labeled and described. Do not fit any models at this point. Do you notice any patterns or interesting facets of the data?**
+
+```{r}
+#load library
+library(tidyverse)
+library(ggplot2)
+library(tidyr)
+
+#load the data
+#delete the first row from the data file
+disease<- read.csv("/Users/ruizhewang/Downloads/disease_data.csv", header= TRUE, skip=1)
+
+#check the column names
+colnames(disease)
+
+#rename variable X
+names(disease)[1]<- "Disease_Name"
+
+#inspect the data
+glimpse(disease)
+
+#check missing values
+sum(is.na(disease))
+
+#show the data summary
+summary(disease)
+
+#create a new data frame for all binary variables
+df_binarydata<- disease[, c(1:17, 19:20, 22:25, 27)]
+
+#convert data from wide to long
+df_long_binary<- df_binarydata %>% 
+  pivot_longer(!Disease_Name, names_to = "Detail", values_to = "Value")
+
+#create summary statistics
+summary_1<- df_long_binary %>% 
+  filter(Value==1) %>% #only keep 1 for binary data
+  group_by(Detail) %>% #group by column "detail"
+  count() %>% #count the number 
+  mutate(percentage= (n/181)*100) %>% #calculate the percentage of being 1
+  arrange(desc(n)) %>% #order from highest to lowest
+  head(10) #keep only the top 10
+
+#create plot
+ggplot(summary_1, aes(x=Detail, y= percentage))+
+         geom_bar(fill= "grey", stat = "identity")+
+         theme(axis.text.x = element_text(angle = 45))+ #rotate the x-axis label
+         scale_y_continuous(limits = c(0, 105))+ #adjust y-axis scale
+         geom_text(aes(label = round(percentage, 1)))+ #add data labels
+         labs(title = "Most Common Charateristics of Diseases", #formatting
+              x= "Disease Charateristics",
+              y= "Percentage")
+```
+
+
+The disease data set has 27 columns and 181 rows. The columns are `r colnames(disease)`. There is no missing values in the data. By observing the data, I find that most variables are binary with value 0 or 1. I would like to focus my research on the binary variables. To create graphs and produce summary statistics, I first reshaped the data set from wide format to long format. From there, I generated a summary statistics to get the percentage of being 1 for each variable across different diseases. I then created a bar chart to visualize the data.
+
+The bar chart helps us to identify the top 10 most common characteristics among the sampled diseases. Variable "R0_Range01" has the highest percentage of approximately 70.17%, indicating that 70.17% of the sampled diseases share this characteristic. Similarly, variable "NumEndemicAll" has the second highest percentage of approximately 39.77%, indicating that 39.77% of the sampled diseases are endemic to all countries. In addition, I find that a total of 71.3% of the sampled disease are transmitted through food, water, soil or vector borne.
+
+
+**2. Hierarchical Clustering: Select a subset of variables from the data to perform an initial analysis using hierarchical clustering. Pick and justify a distance metric and clustering method.**
+
+```{r}
+#only select binary variables that are more relevant to the research
+disease_binary<- disease[, c(1:13, 20, 27)]
+
+#make the first "Disease_Name" column as the row name
+disease_binary <- data.frame(disease_binary[,-1], row.names = disease_binary[,1])
+
+#create a similarity matrix for objects "disease"
+similarities<- matrix(0, nrow=181, ncol=181)
+
+for (i in 1:181){
+  for(j in 1:i){
+    similarities[i,j]<-similarities[j,i]<-
+      sum(disease_binary[i,] == disease_binary[j,])/14
+  }
+}
+
+#create distance matrix
+dist<-as.dist(1 - similarities)
+
+#conduct hierarchical clustering using the distance matrix 
+disease.cluster<- hclust(dist, method= "complete")
+```
+
+
+To study how COVID-19 cluster with or relate to other diseases, especially those known to cause severe human outbreaks, I included the binary variables that are more relevant to the research question. The new data set has 14 columns and 181 rows. The columns are `r colnames(disease_binary)`. 
+
+Since all the variables are binary, I would like to use a distance based on the percentage of similar epidemiological characteristics each disease has. The similarity between a disease and itself is always the maximum similarity of 1. To answer the research question, I plan to do a hierarchical cluster analysis for the objects "disease". The similarity matrix is constructed by comparing the similar characteristics ((0,0) or (1,1)) between any two disease and calculate their percentage of similar characteristics among all the included variables. Since there are 14 variables, I then divided the total number of similar characteristics by 14. In creating the distance matrix, I subtracted the similarities from 1. This ensures that all disease now have a distance of 0 with themselves and all distance are positive. 
+
+I used this distance metric since 1) the variables are not binary so it is not the best way to use Minkowski distance and 2) it helps to measure the dissimilarities between each pair of disease. I used agglomerative clustering with complete linkage method to do the clustering. Agglomerative clustering uses bottom-up approach where each object is initially considered an individual cluster and then merge with other objects in the following steps based on the similarities. I picked complete linkage since it provides a more compact clusters than other method does.  
+
+**3. Display the resulting dendrogram and interpret your results. What would be a reasonable number (or range) of clusters for this data? Can you assign meaning to those clusters?**
+
+```{r}
+#create dendrogram
+plot(disease.cluster, cex=0.5, main= "Disease Cluster Dendrogram")
+```
+
+Based on the dendrogram, I think 2 major clusters are appropriate. The first cluster (the left branch hangs from the root node) can be interpreted as the diseases with human being the main reservoir and virus being the biological agent. The second cluster (the right branch hangs from the root node) can be interpreted as the diseases with rodent being the main reservoir and bacteria or parasite being the biological agent. 
+
+**4. Latent Class Analysis: Using the same subset of variables from your hierarchical clustering analysis, perform an appropriate latent class analysis. Select an appropriate number of latent classes and formally justify your choice.** 
+
+```{r}
+library(pander)
+
+#generate observed response pattern
+counts<- as.data.frame(table(disease_binary))
+obs.counts<- counts[which(counts[,15]>0),]
+response_pattern<- obs.counts[order(obs.counts[,15], decreasing = T), ]
+
+#show the structure of response pattern
+dim(response_pattern)
+
+#show the first few rows 
+head(response_pattern)
+```
+
+
+The response pattern shows that there are 53 responses that have frequency greater than 0. The greatest frequency is 19. 
+
+
+```{r}
+#generate response by each characteristics
+apply(disease_binary, MAR=2, table)
+```
+
+```{r, results='hide'}
+library(poLCA)
+
+#code data as 1 and 2
+disease_binary<- disease_binary+1
+
+# formula specifying what manifest variables to include
+f <- cbind(Transmission_FoodWaterSoil,Transmission_Animal, Transmission_BloodBodySexual,
+Transmission_DirectContact,	Transmission_Endogenous,
+Transmission_respiratory,
+Transmission_vectorborne,	Transmission_Unknown, Agent_BacteriumFungusAlgaProtoctista, Agent_Virus,	
+Agent_Parasite, HumanReservoir,VaccineExists, 
+NumEndemicAll) ~ 1
+
+#model selection
+set.seed(123)
+
+AIC.k <- rep(0, 6)
+chisq.k <- rep(0, 6)
+for(k in 1:6){
+mod.k <- poLCA(f, data = disease_binary, nclass = k, nrep = 50)
+AIC.k[k] <- mod.k$aic
+chisq.k[k] <- mod.k$Chisq
+}
+
+#plot the AIC for different number of classes
+plot(AIC.k, main = "AIC vs K", xlab = "Classes", ylab = "AIC", type = "b")
+
+#plot chi-squared for different number of classes
+plot(chisq.k, main = "Chi-Squared vs K", xlab = "Classes", ylab = "Chi-Squared", type = "b")
+```
+
+
+The plot "AIC vs K" does not show a very prominent elbow but I think at 3 classes the AIC started to decrease more slowly. Similarly, the plot "Chi-Squared vs K" shows that the chi-squared statistics started to decrease at a more slowly rate from class 3. Therefore, I believe 3 latent classes should be appropriate. 
+
+
+**5. Discuss how well the selected latent class model fits the data. How can one assess the model fit, and do those methods agree?**
+
+```{r, results= 'hide'}
+#fit a LCA model using 3 latent classes
+#fit the model with 50 different random restarts
+set.seed(111)
+
+model <- poLCA(f, data = disease_binary, nclass = 3, nrep = 50, maxiter = 10000)
+```
+
+
+
+```{r}
+#show the result
+print(model)
+```
+
+
+```{r}
+#get the observed and expected counts for responses
+residuals<- model$predcell
+
+#calculate the chi-squared residuals
+residuals$chi_squared_residuals<- round((residuals$observed-residuals$expected)^2/residuals$expected,3)
+
+#show the head
+head(residuals$chi_squared_residuals)
+```
+
+Generally there are three ways to measure the goodness-of-fit for latent class analysis: likelihood ratio (G^2), Chi-Squared (X^2) and Chi-Squared residuals. In the model, the chi-squared statistics X^2 is 1158.692, which is greater than the cut-off value of the chi-squared distribution. Thus, we can reject the null hypothesis and conclude that the model has a poor fit. However, since many cells in the response pattern has values smaller than 5, thus the chi-squared distribution may not be valid but it is still a good relative measure of overall fit. Similarly, the G^2 is greater than the cut-off value of the chi-squared distribution, indicating a poor fit of the model.
+
+By looking at the chi-squared residuals, I find that there are several values greater than 4, indicating there are great discrepancies between observed counts and expected counts. Thus, the model does not have a good fit. 
+
+
+**6. Interpret the latent class model with respect to the research question. Additionally, choose one latent class and interpret the associated posterior probabilities in context.**
+
+```{r}
+library(pander)
+
+#class assignment
+class_assignment<-as.data.frame(model$predclass)
+
+#rename column
+names(class_assignment)[1]<- "Assigned_Class"
+
+#calculate percentage of class assignment
+class_summary<- class_assignment %>% 
+  group_by(Assigned_Class) %>% 
+  count() %>% 
+  mutate(class_percentage = (n/181)*100)
+
+#make it into a table
+pander(class_summary, 
+       style= "rmarkdown",
+       caption= "Latent Class Assignment Summary")
+
+# get the posterior probability for each disease
+#create a new data frame to save the result
+posterior_result<- as.data.frame(poLCA.posterior(model, y = model$y))
+
+#add back disease_name
+posterior_result$disease<- disease$Disease_Name
+
+#make it into a table
+pandoc.table(posterior_result, 
+             split.table = Inf, 
+             caption = "Posterior Probability For Disease")
+
+#select class 2 and see which disease fall into this class
+posterior_result %>% 
+  filter(V2 == '1') %>% 
+  dplyr::select(V2, disease)
+
+
+```
+
+
+Latent class model helps us to identify the underlying latent construct for the disease data set so that we get a better understanding of the interrelationship between the selected observed variables. Generally, the model shows that 3 latent classes can be identified from the observed sampled data. By summarizing the latent class assignment for each disease, we find that 32% of the diseases are expected to fall into class 1, 38% are expected to fall into class 2 and 29% are expected to fall into class 3. Most of the posterior probabilities are close to zero or equal to one, indicating that there is little doubt as to the class to which each disease should be allocated. 
+
+By observing the item response conditional probability, I think the three classes roughly represent :
+
+Class 1: Diseases that are mainly transmitted through insects with bacteria being the disease organism and may affect all countries worldwide. 
+
+Class 2: Diseases with virus being the organism that mostly have medication or vaccines for protection and treatment. 
+
+Class 3: Diseases that are mainly transmitted through daily eating and drinking with parasite being the disease organism. 
+
+COVID-19 is expected to fall into class 2 with a probability of 1. Other diseases that fall into class 2 include Zika, Yellow Fever, SARS, etc. 
+
+The posterior probability for class 2 helps us to understand for each disease, what is the conditional probability of being assigned into this class given the selected epidemiological characteristics responses. For example, for Covid-19, given its epidemiological characteristics, the probability of being assigned into class 1 and 3 are zero and 7.23E^-292, respectively. The conditional probability of being assigned into class 2 is 1.Thus, we can conclude that the posterior probability shows a 100% probability that COVID-19 will fall into class 2. 
+
+**7. Summarize the complete analysis. How are results similar or different between the hierarchical clustering and latent class analyses? Is either approach more valid, statistically or otherwise, in your opinion?**
+
+The research aims to understand how COIVD-19 clusters with or relate to other diseases, especially those that cause severe human outbreaks. 
+
+To answer the research question, we employed both descriptive and model-based methods. Hierarchical clustering uses the descriptive approach to explore the similarity/dissimilarity between pairs of diseases and group them into clusters. The latent class analysis uses the probability method to reduce the complexity of the data set and explain the interrelationship between observed epidemiological characteristics by assigning diseases into unobserved latent classes. My research focuses only on the binary variables, in other words, the epidemiological characteristics that take value 0 or 1. I selected a total of 14 relevant variables to include in my analysis. 
+
+For hierarchical clustering, instead of using the Minkowski distance, I used the percentage of dissimilarity as the distance metric and the complete method for clustering. The dendrogram shows two major clusters. The first cluster, where COVID-19 belongs, can be interpreted as the disease with the human being the main reservoir and the virus being the biological agent. The second cluster can be interpreted as the disease, with the rodent being the main reservoir and bacteria or parasite being the biological agent. Hierarchical clustering gives us an overall picture of how the sampled diseases are clustered. 
+
+For latent class analysis, I first conducted model selection to determine the appropriate number of latent classes. Both AIC and chi-squared statistics indicate that three classes should be the most appropriate. Even though AIC and chi-squared statistics were not at their lowest points with three classes, I decided to pick this number considering the interpretation of the model. The model with three latent classes has G^2 being 522 and X^2 being 1158, indicating that the model has a poor fit. Class 1 can be interpreted as the diseases that are mainly transmitted through insects with bacteria being the disease organism and may affect all countries worldwide. Class 2 can be interpreted as the diseases with virus being the organism that mostly have medication or vaccines for protection and treatment. Class 3 can be interpreted as the unprotectable diseases mainly transmitted through daily eating and drinking with parasites being the disease organism. By looking at the posterior probability, I find that 32.04% of the diseases are assigned to class 1, 38.12% are assigned to class 2, and 29.83% are assigned to class 3. COVID-19 is expected to fall into class 2 with a posterior probability of 1. Other diseases that fall into class 2 include Zika, Yellow Fever, SARS, etc. 
+
+To summarize, both methods help to answer the research question. They both provide us with information on how the sampled diseases can be clustered and which diseases can be clustered together with COVID-19, given their epidemiological characteristics. However, both models have some limitations. Hierarchical clustering is simple, but it may generate different interpretations by only looking at the dendrogram. The latent class model in the analysis has a poor fit so that I may need further research. 
+
+I think the latent class model is more valid than the hierarchical clustering. Despite its poor goodness-of-fit, the latent class model is based on probability theory, and it can make inferences about a population. With the latent class model, I can quickly learn the probability of a disease being assigned to a specific class given its characteristics, which ensures the accuracy and interpretability of the model.
+
+
+
+
+
+
+
+
+
